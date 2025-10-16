@@ -1,0 +1,15 @@
+.idea/
+.venv/
+build/
+dist/
+plots/
+vacancy_parser.build/
+vacancy_parser.dist/
+AutoParserMongoDB.py
+AutoParserMongoDB.spec
+DBTest.py
+GEMINI.md
+nuitka-crash-report.xml
+*.xlsx
+Plot_Hourly.py
+VacAnalyze.py
