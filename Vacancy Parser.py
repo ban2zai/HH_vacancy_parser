@@ -135,7 +135,23 @@ def parse_hh_vacancies(base_url: str, max_pages: int = 0, specialization_lookup:
 
                 vacancy_id = vacancy.get("vacancyId")
                 vacancy_link = f"https://hh.ru/vacancy/{vacancy_id}" if vacancy_id else None
-                publication_type = vacancy.get("metallic")
+
+                # Новая логика для publication_type
+                publication_type = "Неизвестно"
+                calculated_states = vacancy.get("vacancyProperties", {}).get("calculatedStates", {}).get("HH", {})
+                premium = calculated_states.get("premium", False)
+                standard = calculated_states.get("standard", False)
+                standard_plus = calculated_states.get("standardPlus", False)
+
+                # Отладочный вывод для проверки значений полей
+                print(f"Вакансия {vacancy_counter}: premium={premium}, standard={standard}, standardPlus={standard_plus}")
+
+                if premium:
+                    publication_type = "Премиум"
+                elif standard:
+                    publication_type = "Стандарт"
+                elif standard_plus:
+                    publication_type = "Плюс Стандарт"
 
                 creation_time_raw = vacancy.get("creationTime")
                 creation_date_formatted, creation_time_formatted = format_date_time_separate(creation_time_raw)
@@ -147,7 +163,7 @@ def parse_hh_vacancies(base_url: str, max_pages: int = 0, specialization_lookup:
                 total_responses_count = vacancy.get("totalResponsesCount")
                 responses_count = vacancy.get("responsesCount")
 
-                is_adv = vacancy.get("@isAdv", False)  # Проверяем напрямую @isAdv
+                is_adv = vacancy.get("@isAdv", False)
                 has_hh_auction = False
                 has_zp_promo = False
                 click_url = vacancy.get("clickUrl", None)
@@ -211,8 +227,6 @@ def parse_hh_vacancies(base_url: str, max_pages: int = 0, specialization_lookup:
                     "О(2)": responses_count,
                     "Специализация": professional_role_name,
                     "Дней Прошло": hours_since_creation
-                    # "Есть ZP_PROMO": "Да" if has_zp_promo else "Нет",
-                    # "URL рекламы": click_url if click_url else "N/A"
                 })
 
             current_page += 1
@@ -269,7 +283,6 @@ if __name__ == "__main__":
         print(
             "Не удалось получить справочник специализаций с API. Названия специализаций будут отображаться как 'ID: [числовой ID]'.")
 
-    # --- Новые строки для ввода в консоли ---
     base_url_input = input("Введите базовый URL для парсинга: ")
 
     num_pages_input = input("Введите количество страниц для парсинга (0 - все страницы): ")
@@ -279,7 +292,6 @@ if __name__ == "__main__":
         print("Неверный ввод. Будут парсированы все страницы.")
         num_pages_to_parse = 0
 
-    # Ограничение количества страниц до 20
     if num_pages_to_parse > 20:
         print("Внимание: Максимальное количество страниц для парсинга hh.ru - 20. Установлено значение 20.")
         num_pages_to_parse = 20
