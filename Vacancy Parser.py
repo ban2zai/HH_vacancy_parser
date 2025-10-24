@@ -6,6 +6,8 @@ from datetime import datetime
 import re
 import openpyxl
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.table import Table, TableStyleInfo
+from openpyxl.styles import Alignment, PatternFill
 from urllib.parse import urlparse
 
 def format_date_time_separate(iso_date_string):
@@ -58,7 +60,7 @@ def parse_hh_vacancies(base_url: str, max_pages: int, specialization_lookup: dic
 
     vacancy_counter = 0
     max_pages = 20 if max_pages == 0 or max_pages > 20 else max_pages
-    seen_vacancy_links = set()  # Множество для отслеживания уникальных ссылок
+    seen_vacancy_links = set()
 
     if "&items_on_page=" not in base_url:
         base_url += "&items_on_page=100"
@@ -113,7 +115,6 @@ def parse_hh_vacancies(base_url: str, max_pages: int, specialization_lookup: dic
                 vacancy_id = vacancy.get("vacancyId")
                 vacancy_link = f"https://hh.ru/vacancy/{vacancy_id}" if vacancy_id else None
 
-                # Пропускаем вакансию, если ссылка уже встречалась
                 if vacancy_link and vacancy_link in seen_vacancy_links:
                     print(f"Вакансия с ссылкой {vacancy_link} уже обработана, пропускаем.")
                     continue
@@ -158,7 +159,6 @@ def parse_hh_vacancies(base_url: str, max_pages: int, specialization_lookup: dic
                 publication_date_formatted, publication_time_formatted = format_date_time_separate(publication_date_raw)
 
                 total_responses_count = vacancy.get("totalResponsesCount")
-                responses_count = vacancy.get("responsesCount")
 
                 is_adv = vacancy.get("@isAdv", False)
                 has_hh_auction = False
@@ -201,22 +201,20 @@ def parse_hh_vacancies(base_url: str, max_pages: int, specialization_lookup: dic
 
                 all_vacancies_data.append({
                     "№ ": vacancy_counter,
-                    "Город   ": city,
+                    "Город": city,
                     "Вакансия": job_title,
                     "Опыт работы": work_experience,
                     "Компания": company_name,
                     "Ссылка": vacancy_link,
                     "Тип публикации": publication_type,
-                    "isAdv": "Да" if is_adv else "Нет",
-                    "HH_AUCTION": "Да" if has_hh_auction else "Нет",
+                    "HH AUCTION (Топ поиска)": "Да" if has_hh_auction else "Нет",
                     "ЗП От": compensation_from,
                     "ЗП До": compensation_to,
-                    "Дата соз": creation_date_formatted,
-                    "Время с": creation_time_formatted,
-                    "Дата пуб": publication_date_formatted,
-                    "Время п": publication_time_formatted,
-                    "О(общ)": total_responses_count,
-                    "О(2)": responses_count,
+                    "Дата создания": creation_date_formatted,
+                    "Время создания": creation_time_formatted,
+                    "Дата публикации": publication_date_formatted,
+                    "Время публикации": publication_time_formatted,
+                    "Отклики": total_responses_count,  # Изменено с "О(общ)"
                     "Специализация": professional_role_name,
                     "Дней Прошло": hours_since_creation
                 })
@@ -241,13 +239,19 @@ def save_to_excel(data: list[dict]):
         print("Нет данных для сохранения в Excel.")
         return
 
-    df = pd.DataFrame(data)
-    df["Откликов в день"] = ""
+    # Удаляем столбец "О(2)" и переименовываем "О(общ)" в "Отклики"
+    modified_data = []
+    for row in data:
+        modified_row = {k: v for k, v in row.items() if k != "О(2)"}
+        modified_data.append(modified_row)
+
+    df = pd.DataFrame(modified_data)
+    df["Откликов в день (среднее)"] = ""
 
     first_city = "НеизвестныйГород"
-    for row in data:
-        if "Город   " in row and row["Город   "]:
-            first_city = re.sub(r'[\\/:*?"<>|]', '_', row["Город   "])
+    for row in modified_data:
+        if "Город" in row and row["Город"]:
+            first_city = re.sub(r'[\\/:*?"<>|]', '_', row["Город"])
             break
 
     current_date = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -258,19 +262,90 @@ def save_to_excel(data: list[dict]):
         wb = openpyxl.load_workbook(file_name)
         ws = wb.active
 
+        # Установка переноса текста для заголовков
+        for cell in ws[1]:
+            cell.alignment = Alignment(wrapText=True)
+
+        # Определяем индексы столбцов для формулы, столбца "Ссылка" и "Компания"
         header_row = ws[1]
         total_responses_col = None
         days_passed_col = None
+        link_col = None
+        company_col = None
         for idx, cell in enumerate(header_row, 1):
-            if cell.value == "О(общ)":
+            if cell.value == "Отклики":
                 total_responses_col = get_column_letter(idx)
             if cell.value == "Дней Прошло":
                 days_passed_col = get_column_letter(idx)
+            if cell.value == "Ссылка":
+                link_col = get_column_letter(idx)
+            if cell.value == "Компания":
+                company_col = get_column_letter(idx)
 
+        # Установка формулы для "Откликов в день (среднее)"
         if total_responses_col and days_passed_col:
             responses_per_day_col = get_column_letter(ws.max_column)
             for row in range(2, ws.max_row + 1):
                 ws[f"{responses_per_day_col}{row}"] = f'=IFERROR(ROUND({total_responses_col}{row}/{days_passed_col}{row},2),"")'
+
+        # Делаем ссылки кликабельными
+        if link_col:
+            for row in range(2, ws.max_row + 1):
+                cell = ws[f"{link_col}{row}"]
+                if cell.value and isinstance(cell.value, str) and cell.value.startswith('http'):
+                    cell.hyperlink = cell.value
+                    cell.style = 'Hyperlink'
+
+        # Подсветка строк для компании "Компания Апогей (Техподдержка 1С)"
+        if company_col:
+            fill = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")  # RGB(146, 208, 80)
+            for row in range(2, ws.max_row + 1):
+                company_cell = ws[f"{company_col}{row}"]
+                if company_cell.value == "Компания Апогей (Техподдержка 1С)":
+                    for col in range(1, ws.max_column + 1):
+                        cell = ws[f"{get_column_letter(col)}{row}"]
+                        cell.fill = fill
+
+        # Создаём таблицу Excel
+        tab = Table(displayName="VacancyTable", ref=f"A1:{get_column_letter(ws.max_column)}{ws.max_row}")
+        style = TableStyleInfo(
+            name="TableStyleMedium2",
+            showFirstColumn=False,
+            showLastColumn=False,
+            showRowStripes=True,
+            showColumnStripes=False
+        )
+        tab.tableStyleInfo = style
+        ws.add_table(tab)
+
+        # Установка ширины столбцов в пикселях (переводим в единицы openpyxl: 1 единица = 9 пикселей)
+        column_widths_pixels = {
+            "№ ": 40,
+            "Город": 128,
+            "Вакансия": 263,
+            "Опыт работы": 133,
+            "Компания": 143,
+            "Ссылка": 65,
+            "Тип публикации": 125,
+            "HH AUCTION (Топ поиска)": 83,
+            "ЗП От": 70,
+            "ЗП До": 70,
+            "Дата создания": 100,
+            "Время создания": 60,
+            "Дата публикации": 100,
+            "Время публикации": 60,
+            "Отклики": 60,
+            "Специализация": 220,
+            "Дней Прошло": 70,
+            "Откликов в день (среднее)": 70
+        }
+
+        for idx, cell in enumerate(header_row, 1):
+            column_letter = get_column_letter(idx)
+            header = cell.value
+            if header in column_widths_pixels:
+                width_in_units = column_widths_pixels[header] / 9
+                ws.column_dimensions[column_letter].width = width_in_units
 
         wb.save(file_name)
         print(f"\nДанные успешно сохранены в файл: {file_name}")
@@ -278,7 +353,6 @@ def save_to_excel(data: list[dict]):
         print(f"Ошибка при сохранении в Excel: {e}")
 
 def is_valid_hh_url(url: str) -> bool:
-    """Проверяет, является ли URL корректным для hh.ru поиска вакансий."""
     if not url:
         return False
     try:
